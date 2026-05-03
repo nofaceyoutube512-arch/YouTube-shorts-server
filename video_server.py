@@ -69,11 +69,13 @@ def create_short():
             '-shortest',
             '-vf', (
                 f"drawtext=text='{title_safe}'"
-                f":fontcolor=white:fontsize=64:font='DejaVu-Sans-Bold'"
-                f":x=(w-text_w)/2:y=(h/2)-200:line_spacing=10:borderw=3:bordercolor=black,"
+                f":fontcolor=white:fontsize=64"
+                f":x=(w-text_w)/2:y=(h/2)-200"
+                f":borderw=3:bordercolor=black,"
                 f"drawtext=text='{hook_safe}'"
-                f":fontcolor=0x00FF00:fontsize=48:font='DejaVu-Sans'"
-                f":x=(w-text_w)/2:y=(h/2)+50:line_spacing=10:borderw=2:bordercolor=black"
+                f":fontcolor=0x00FF00:fontsize=48"
+                f":x=(w-text_w)/2:y=(h/2)+50"
+                f":borderw=2:bordercolor=black"
             ),
             '-c:v', 'libx264',
             '-preset', 'fast',

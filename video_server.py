@@ -12,67 +12,61 @@ def health():
 
 @app.route('/create-short', methods=['POST'])
 def create_short():
-    tmp_audio = None
-    tmp_video = None
+    tmp_audio_path = None
+    tmp_video_path = None
+    tmp_title_path = None
+    tmp_hook_path = None
 
     try:
-        title = None
-        hook = None
-
-        # Support both multipart (binary audio) and JSON (audio_url)
         if request.content_type and 'multipart/form-data' in request.content_type:
-            # Binary audio uploaded directly from Make
             title = request.form.get('title', 'AI Feature')
             hook = request.form.get('hook', '')
             audio_file = request.files.get('audio')
             if not audio_file:
                 return jsonify({"error": "audio file is required"}), 400
-
             tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
             audio_file.save(tmp_audio.name)
             tmp_audio.close()
-            audio_path = tmp_audio.name
-
+            tmp_audio_path = tmp_audio.name
         else:
-            # JSON body with audio_url
             data = request.get_json(force=True)
             if not data:
                 return jsonify({"error": "invalid request body"}), 400
-
             title = data.get('title', 'AI Feature')
             hook = data.get('hook', '')
             audio_url = data.get('audio_url')
-
             if not audio_url:
                 return jsonify({"error": "audio_url is required"}), 400
-
             import urllib.request
             tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
             tmp_audio.close()
             urllib.request.urlretrieve(audio_url, tmp_audio.name)
-            audio_path = tmp_audio.name
+            tmp_audio_path = tmp_audio.name
 
-        # Generate output video path
+        # Write text to temp files to avoid special character escaping issues
+        tmp_title = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp_title.write(title[:60])
+        tmp_title.close()
+        tmp_title_path = tmp_title.name
+
+        tmp_hook = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp_hook.write(hook[:80])
+        tmp_hook.close()
+        tmp_hook_path = tmp_hook.name
+
         tmp_video_path = tempfile.mktemp(suffix='.mp4')
-
-        # Sanitize text for ffmpeg drawtext
-        def esc(text):
-            return text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-
-        title_safe = esc(title[:60])
-        hook_safe = esc(hook[:80])
 
         ffmpeg_cmd = [
             'ffmpeg', '-y',
-            '-i', audio_path,
+            '-i', tmp_audio_path,
             '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
             '-shortest',
             '-vf', (
-                f"drawtext=text='{title_safe}'"
+                f"drawtext=textfile='{tmp_title_path}'"
                 f":fontcolor=white:fontsize=64"
                 f":x=(w-text_w)/2:y=(h/2)-200"
                 f":borderw=3:bordercolor=black,"
-                f"drawtext=text='{hook_safe}'"
+                f"drawtext=textfile='{tmp_hook_path}'"
                 f":fontcolor=0x00FF00:fontsize=48"
                 f":x=(w-text_w)/2:y=(h/2)+50"
                 f":borderw=2:bordercolor=black"
@@ -89,7 +83,7 @@ def create_short():
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            return jsonify({"error": "ffmpeg failed", "details": result.stderr}), 500
+            return jsonify({"error": "ffmpeg failed", "details": result.stderr[-2000:]}), 500
 
         return send_file(
             tmp_video_path,
@@ -102,8 +96,12 @@ def create_short():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if tmp_audio and os.path.exists(tmp_audio.name):
-            os.unlink(tmp_audio.name)
+        for path in [tmp_audio_path, tmp_title_path, tmp_hook_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except:
+                    pass
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))

@@ -1,4 +1,5 @@
 import os
+import io
 import uuid
 import subprocess
 import tempfile
@@ -58,7 +59,6 @@ def create_short():
 
         ffmpeg_cmd = [
             'ffmpeg', '-y',
-            # lavfi color source first so -shortest works correctly
             '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
             '-i', tmp_audio_path,
             '-map', '0:v',
@@ -88,8 +88,15 @@ def create_short():
         if result.returncode != 0:
             return jsonify({"error": "ffmpeg failed", "details": result.stderr[-3000:]}), 500
 
+        # Read video into memory so temp file can be safely deleted
+        with open(tmp_video_path, 'rb') as f:
+            video_bytes = f.read()
+
+        if len(video_bytes) == 0:
+            return jsonify({"error": "ffmpeg produced empty file", "stderr": result.stderr[-2000:]}), 500
+
         return send_file(
-            tmp_video_path,
+            io.BytesIO(video_bytes),
             mimetype='video/mp4',
             as_attachment=True,
             download_name=f'short_{uuid.uuid4().hex[:8]}.mp4'
@@ -99,7 +106,7 @@ def create_short():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        for path in [tmp_audio_path, tmp_title_path, tmp_hook_path]:
+        for path in [tmp_audio_path, tmp_title_path, tmp_hook_path, tmp_video_path]:
             if path and os.path.exists(path):
                 try:
                     os.unlink(path)

@@ -58,8 +58,11 @@ def create_short():
 
         ffmpeg_cmd = [
             'ffmpeg', '-y',
-            '-i', tmp_audio_path,
+            # lavfi color source first so -shortest works correctly
             '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
+            '-i', tmp_audio_path,
+            '-map', '0:v',
+            '-map', '1:a',
             '-shortest',
             '-vf', (
                 f"drawtext=textfile='{tmp_title_path}'"
@@ -83,7 +86,7 @@ def create_short():
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            return jsonify({"error": "ffmpeg failed", "details": result.stderr[-2000:]}), 500
+            return jsonify({"error": "ffmpeg failed", "details": result.stderr[-3000:]}), 500
 
         return send_file(
             tmp_video_path,

@@ -1,9 +1,8 @@
-from flask import Flask, request, jsonify, send_file
-import subprocess
 import os
-import tempfile
 import uuid
-import requests
+import subprocess
+import tempfile
+from flask import Flask, request, send_file, jsonify
 
 app = Flask(__name__)
 
@@ -13,87 +12,97 @@ def health():
 
 @app.route('/create-short', methods=['POST'])
 def create_short():
+    tmp_audio = None
+    tmp_video = None
+
     try:
-        data = request.get_json()
-        
-        audio_url = data.get('audio_url')
-        title = data.get('title', 'Hidden AI Feature')
-        hook = data.get('hook', '')
-        
-        if not audio_url:
-            return jsonify({"error": "audio_url is required"}), 400
+        title = None
+        hook = None
 
-        job_id = str(uuid.uuid4())
-        temp_dir = tempfile.mkdtemp()
-        
-        audio_path = os.path.join(temp_dir, f'{job_id}.mp3')
-        output_path = os.path.join(temp_dir, f'{job_id}.mp4')
+        # Support both multipart (binary audio) and JSON (audio_url)
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            # Binary audio uploaded directly from Make
+            title = request.form.get('title', 'AI Feature')
+            hook = request.form.get('hook', '')
+            audio_file = request.files.get('audio')
+            if not audio_file:
+                return jsonify({"error": "audio file is required"}), 400
 
-        # Download audio file
-        audio_response = requests.get(audio_url, timeout=30)
-        with open(audio_path, 'wb') as f:
-            f.write(audio_response.content)
+            tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+            audio_file.save(tmp_audio.name)
+            tmp_audio.close()
+            audio_path = tmp_audio.name
 
-        # Clean text for FFmpeg drawtext
-        def clean_text(text):
-            return text.replace("'", "").replace('"', '').replace(':', ' ').replace('\\', '').replace('%', 'percent')[:60]
+        else:
+            # JSON body with audio_url
+            data = request.get_json(force=True)
+            if not data:
+                return jsonify({"error": "invalid request body"}), 400
 
-        clean_title = clean_text(title)
-        clean_hook = clean_text(hook)
+            title = data.get('title', 'AI Feature')
+            hook = data.get('hook', '')
+            audio_url = data.get('audio_url')
 
-        # Build FFmpeg command
-        # Creates 1080x1920 vertical video (YouTube Shorts format)
-        # Black background + bold white title + green hook text + audio
+            if not audio_url:
+                return jsonify({"error": "audio_url is required"}), 400
+
+            import urllib.request
+            tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+            tmp_audio.close()
+            urllib.request.urlretrieve(audio_url, tmp_audio.name)
+            audio_path = tmp_audio.name
+
+        # Generate output video path
+        tmp_video_path = tempfile.mktemp(suffix='.mp4')
+
+        # Sanitize text for ffmpeg drawtext
+        def esc(text):
+            return text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
+
+        title_safe = esc(title[:60])
+        hook_safe = esc(hook[:80])
+
         ffmpeg_cmd = [
             'ffmpeg', '-y',
-            '-f', 'lavfi',
-            '-i', f'color=black:size=1080x1920:rate=30',
             '-i', audio_path,
-            '-filter_complex',
-            (
-                f"[0:v]drawtext=text='{clean_title}':"
-                f"fontsize=80:fontcolor=white:x=(w-text_w)/2:y=(h/2)-200:"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"box=1:boxcolor=black@0.5:boxborderw=20,"
-                f"drawtext=text='{clean_hook}':"
-                f"fontsize=50:fontcolor=#00ff88:x=(w-text_w)/2:y=(h/2)+50:"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
-                f"box=1:boxcolor=black@0.5:boxborderw=10[v]"
-            ),
-            '-map', '[v]',
-            '-map', '1:a',
+            '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
             '-shortest',
+            '-vf', (
+                f"drawtext=text='{title_safe}'"
+                f":fontcolor=white:fontsize=64:font='DejaVu-Sans-Bold'"
+                f":x=(w-text_w)/2:y=(h/2)-200:line_spacing=10:borderw=3:bordercolor=black,"
+                f"drawtext=text='{hook_safe}'"
+                f":fontcolor=0x00FF00:fontsize=48:font='DejaVu-Sans'"
+                f":x=(w-text_w)/2:y=(h/2)+50:line_spacing=10:borderw=2:bordercolor=black"
+            ),
             '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-crf', '23',
             '-c:a', 'aac',
-            '-b:a', '192k',
-            '-pix_fmt', 'yuv420p',
+            '-b:a', '128k',
             '-movflags', '+faststart',
-            output_path
+            tmp_video_path
         ]
 
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=120)
-        
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+
         if result.returncode != 0:
-            return jsonify({
-                "error": "FFmpeg failed",
-                "details": result.stderr[-500:]
-            }), 500
+            return jsonify({"error": "ffmpeg failed", "details": result.stderr}), 500
 
         return send_file(
-            output_path,
+            tmp_video_path,
             mimetype='video/mp4',
             as_attachment=True,
-            download_name=f'short_{job_id}.mp4'
+            download_name=f'short_{uuid.uuid4().hex[:8]}.mp4'
         )
 
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"Failed to download audio: {str(e)}"}), 400
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "Video generation timed out"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    finally:
+        if tmp_audio and os.path.exists(tmp_audio.name):
+            os.unlink(tmp_audio.name)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)

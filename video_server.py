@@ -10,6 +10,14 @@ app = Flask(__name__)
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
+    @app.route('/debug', methods=['POST'])
+def debug():
+    return jsonify({
+        "content_type": request.content_type,
+        "files": list(request.files.keys()),
+        "form": list(request.form.keys()),
+        "has_audio": 'audio' in request.files
+    })
 
 @app.route('/create-short', methods=['POST'])
 def create_short():

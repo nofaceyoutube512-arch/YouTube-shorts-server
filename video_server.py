@@ -10,10 +10,11 @@ app = Flask(__name__)
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
-    @app.route('/debug', methods=['POST'])
+
+@app.route('/debug', methods=['POST'])
 def debug():
     return jsonify({
-        "content_type": request.content_type,
+        "content_type": str(request.content_type),
         "files": list(request.files.keys()),
         "form": list(request.form.keys()),
         "has_audio": 'audio' in request.files
@@ -21,83 +22,66 @@ def debug():
 
 @app.route('/create-short', methods=['POST'])
 def create_short():
-    tmp_audio_path = None
-    tmp_video_path = None
-    tmp_title_path = None
-    tmp_hook_path = None
-
+    paths = []
     try:
-       if request.files.get('audio'):
-            title = request.form.get('title', 'AI Feature')
-            hook = request.form.get('hook', '')
-            audio_file = request.files.get('audio')
-            if not audio_file:
-                return jsonify({"error": "audio file is required"}), 400
-            tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
-            audio_file.save(tmp_audio.name)
-            tmp_audio.close()
-            tmp_audio_path = tmp_audio.name
-        else:
-            data = request.get_json(force=True)
-            if not data:
-                return jsonify({"error": "invalid request body"}), 400
-            title = data.get('title', 'AI Feature')
-            hook = data.get('hook', '')
-            audio_url = data.get('audio_url')
-            if not audio_url:
-                return jsonify({"error": "audio_url is required"}), 400
-            import urllib.request
-            tmp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
-            tmp_audio.close()
-            urllib.request.urlretrieve(audio_url, tmp_audio.name)
-            tmp_audio_path = tmp_audio.name
+        # Get audio file
+        audio_file = request.files.get('audio')
+        if not audio_file:
+            return jsonify({"error": "audio file is required", "files": list(request.files.keys()), "content_type": str(request.content_type)}), 400
 
-        # Write text to temp files to avoid special character escaping issues
-        tmp_title = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-        tmp_title.write(title[:60])
-        tmp_title.close()
-        tmp_title_path = tmp_title.name
+        title = request.form.get('title', 'AI Tips')[:60]
+        hook = request.form.get('hook', '')[:80]
 
-        tmp_hook = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-        tmp_hook.write(hook[:80])
-        tmp_hook.close()
-        tmp_hook_path = tmp_hook.name
+        # Save audio to temp file
+        audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+        audio_file.save(audio_tmp.name)
+        audio_tmp.close()
+        paths.append(audio_tmp.name)
 
-        tmp_video_path = tempfile.mktemp(suffix='.mp4')
+        # Save title to temp file
+        title_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        title_tmp.write(title)
+        title_tmp.close()
+        paths.append(title_tmp.name)
 
-        ffmpeg_cmd = [
+        # Save hook to temp file
+        hook_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        hook_tmp.write(hook)
+        hook_tmp.close()
+        paths.append(hook_tmp.name)
+
+        # Output video path
+        video_path = tempfile.mktemp(suffix='.mp4')
+        paths.append(video_path)
+
+        # Build video with FFmpeg
+        cmd = [
             'ffmpeg', '-y',
             '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
-            '-i', tmp_audio_path,
-            '-map', '0:v',
-            '-map', '1:a',
+            '-i', audio_tmp.name,
+            '-map', '0:v', '-map', '1:a',
             '-shortest',
             '-vf', (
-                f"drawtext=textfile='{tmp_title_path}'"
-                f":fontcolor=white:fontsize=64"
-                f":x=(w-text_w)/2:y=(h/2)-200"
-                f":borderw=3:bordercolor=black,"
-                f"drawtext=textfile='{tmp_hook_path}'"
-                f":fontcolor=0x00FF00:fontsize=48"
-                f":x=(w-text_w)/2:y=(h/2)+50"
-                f":borderw=2:bordercolor=black"
+                f"drawtext=textfile='{title_tmp.name}':fontcolor=white:fontsize=60:x=(w-text_w)/2:y=700:borderw=3:bordercolor=black,"
+                f"drawtext=textfile='{hook_tmp.name}':fontcolor=00ff00:fontsize=44:x=(w-text_w)/2:y=820:borderw=2:bordercolor=black"
             ),
-            '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '23',
-            '-c:a', 'aac',
-            '-b:a', '128k',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
             '-movflags', '+faststart',
-            tmp_video_path
+            video_path
         ]
 
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            return jsonify({"error": "ffmpeg failed", "details": result.stderr[-3000:]}), 500
+            return jsonify({
+                "error": "ffmpeg failed",
+                "returncode": result.returncode,
+                "stderr": result.stderr[-3000:]
+            }), 500
 
-        # Read video into memory so temp file can be safely deleted
-        with open(tmp_video_path, 'rb') as f:
+        # Read into memory and return
+        with open(video_path, 'rb') as f:
             video_bytes = f.read()
 
         if len(video_bytes) == 0:
@@ -111,15 +95,16 @@ def create_short():
         )
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
     finally:
-        for path in [tmp_audio_path, tmp_title_path, tmp_hook_path, tmp_video_path]:
-            if path and os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except:
-                    pass
+        for p in paths:
+            try:
+                if p and os.path.exists(p):
+                    os.unlink(p)
+            except:
+                pass
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))

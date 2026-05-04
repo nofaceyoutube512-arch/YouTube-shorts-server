@@ -24,49 +24,55 @@ def debug():
 def create_short():
     paths = []
     try:
-        # Get audio file
         audio_file = request.files.get('audio')
         if not audio_file:
-            return jsonify({"error": "audio file is required", "files": list(request.files.keys()), "content_type": str(request.content_type)}), 400
+            return jsonify({
+                "error": "audio file is required",
+                "files": list(request.files.keys()),
+                "content_type": str(request.content_type)
+            }), 400
 
         title = request.form.get('title', 'AI Tips')[:60]
         hook = request.form.get('hook', '')[:80]
 
-        # Save audio to temp file
+        # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
         audio_file.save(audio_tmp.name)
         audio_tmp.close()
         paths.append(audio_tmp.name)
 
-        # Save title to temp file
+        # Save title text
         title_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         title_tmp.write(title)
         title_tmp.close()
         paths.append(title_tmp.name)
 
-        # Save hook to temp file
+        # Save hook text
         hook_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         hook_tmp.write(hook)
         hook_tmp.close()
         paths.append(hook_tmp.name)
 
-        # Output video path
+        # Output path
         video_path = tempfile.mktemp(suffix='.mp4')
         paths.append(video_path)
 
-        # Build video with FFmpeg
         cmd = [
             'ffmpeg', '-y',
-            '-f', 'lavfi', '-i', 'color=c=black:s=1080x1920:r=30',
+            '-f', 'lavfi', '-i', 'color=c=black:s=540x960:r=24',
             '-i', audio_tmp.name,
             '-map', '0:v', '-map', '1:a',
             '-shortest',
+            '-threads', '1',
             '-vf', (
-                f"drawtext=textfile='{title_tmp.name}':fontcolor=white:fontsize=60:x=(w-text_w)/2:y=700:borderw=3:bordercolor=black,"
-                f"drawtext=textfile='{hook_tmp.name}':fontcolor=00ff00:fontsize=44:x=(w-text_w)/2:y=820:borderw=2:bordercolor=black"
+                f"drawtext=textfile='{title_tmp.name}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=350:borderw=2:bordercolor=black,"
+                f"drawtext=textfile='{hook_tmp.name}':fontcolor=00ff00:fontsize=28:x=(w-text_w)/2:y=420:borderw=2:bordercolor=black"
             ),
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-b:a', '128k',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '28',
+            '-c:a', 'aac',
+            '-b:a', '96k',
             '-movflags', '+faststart',
             video_path
         ]
@@ -80,12 +86,11 @@ def create_short():
                 "stderr": result.stderr[-3000:]
             }), 500
 
-        # Read into memory and return
         with open(video_path, 'rb') as f:
             video_bytes = f.read()
 
         if len(video_bytes) == 0:
-            return jsonify({"error": "ffmpeg produced empty file", "stderr": result.stderr[-2000:]}), 500
+            return jsonify({"error": "ffmpeg produced empty file"}), 500
 
         return send_file(
             io.BytesIO(video_bytes),

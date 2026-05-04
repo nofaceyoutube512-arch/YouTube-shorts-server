@@ -32,8 +32,8 @@ def create_short():
                 "content_type": str(request.content_type)
             }), 400
 
-        title = request.form.get('title', 'AI Tips')[:60]
-        hook = request.form.get('hook', '')[:80]
+        title = request.form.get('title', 'AI Tips')[:80]
+        hook = request.form.get('hook', '')[:100]
 
         # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
@@ -65,8 +65,26 @@ def create_short():
             '-shortest',
             '-threads', '1',
             '-vf', (
-                f"drawtext=textfile='{title_tmp.name}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=350:borderw=2:bordercolor=black,"
-                f"drawtext=textfile='{hook_tmp.name}':fontcolor=00ff00:fontsize=28:x=(w-text_w)/2:y=420:borderw=2:bordercolor=black"
+                # Title: white, smaller font, word wrap at 480px wide
+                f"drawtext=textfile='{title_tmp.name}'"
+                f":fontcolor=white"
+                f":fontsize=24"
+                f":x=30"
+                f":y=300"
+                f":borderw=2"
+                f":bordercolor=black"
+                f":line_spacing=8"
+                f":expansion=none,"
+                # Hook: green, smaller font, below title
+                f"drawtext=textfile='{hook_tmp.name}'"
+                f":fontcolor=00ff00"
+                f":fontsize=20"
+                f":x=30"
+                f":y=390"
+                f":borderw=2"
+                f":bordercolor=black"
+                f":line_spacing=6"
+                f":expansion=none"
             ),
             '-c:v', 'libx264',
             '-preset', 'ultrafast',

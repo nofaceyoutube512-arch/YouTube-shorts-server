@@ -19,7 +19,7 @@ def create_short():
     tmp_hook_path = None
 
     try:
-        if request.content_type and 'multipart/form-data' in request.content_type:
+       if request.files.get('audio'):
             title = request.form.get('title', 'AI Feature')
             hook = request.form.get('hook', '')
             audio_file = request.files.get('audio')

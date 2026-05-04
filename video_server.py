@@ -68,7 +68,7 @@ def create_short():
                 # Title: white, smaller font, word wrap at 480px wide
                 f"drawtext=textfile='{title_tmp.name}'"
                 f":fontcolor=white"
-                f":fontsize=24"
+                f":fontsize=18"
                 f":x=30"
                 f":y=300"
                 f":borderw=2"
@@ -78,7 +78,7 @@ def create_short():
                 # Hook: green, smaller font, below title
                 f"drawtext=textfile='{hook_tmp.name}'"
                 f":fontcolor=00ff00"
-                f":fontsize=20"
+                f":fontsize=16"
                 f":x=30"
                 f":y=390"
                 f":borderw=2"

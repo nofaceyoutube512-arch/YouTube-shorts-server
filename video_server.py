@@ -74,7 +74,7 @@ def create_short():
                 # Static bold title — centered, large, white with black shadow
                 f"drawtext=textfile='{title_tmp.name}'"
                 f":fontcolor=white"
-                f":fontsize=34"
+                f":fontsize=28"
                 f":x=(w-text_w)/2"
                 f":y=(h/2)-100"
                 f":borderw=4"

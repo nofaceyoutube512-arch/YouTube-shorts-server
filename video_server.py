@@ -20,6 +20,27 @@ def debug():
         "has_audio": 'audio' in request.files
     })
 
+def split_title(title, max_chars=25):
+    """Split title into two lines at a word boundary near the middle."""
+    words = title.split()
+    best_split = 0
+    best_diff = float('inf')
+    for i in range(1, len(words)):
+        line1 = ' '.join(words[:i])
+        line2 = ' '.join(words[i:])
+        diff = abs(len(line1) - len(line2))
+        if diff < best_diff and len(line1) <= max_chars and len(line2) <= max_chars:
+            best_diff = diff
+            best_split = i
+    if best_split == 0:
+        # fallback: just split at max_chars
+        line1 = title[:max_chars].rsplit(' ', 1)[0]
+        line2 = title[len(line1):].strip()
+    else:
+        line1 = ' '.join(words[:best_split])
+        line2 = ' '.join(words[best_split:])
+    return line1, line2
+
 @app.route('/create-short', methods=['POST'])
 def create_short():
     paths = []
@@ -32,8 +53,11 @@ def create_short():
                 "content_type": str(request.content_type)
             }), 400
 
-        title = request.form.get('title', 'AI Tips')[:50]
+        title = request.form.get('title', 'AI Tips')[:80]
         hook = request.form.get('hook', '')[:120]
+
+        # Split title into two lines
+        line1, line2 = split_title(title)
 
         # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
@@ -41,11 +65,17 @@ def create_short():
         audio_tmp.close()
         paths.append(audio_tmp.name)
 
-        # Save title text
-        title_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-        title_tmp.write(title)
-        title_tmp.close()
-        paths.append(title_tmp.name)
+        # Save title line 1
+        title1_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        title1_tmp.write(line1)
+        title1_tmp.close()
+        paths.append(title1_tmp.name)
+
+        # Save title line 2
+        title2_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        title2_tmp.write(line2)
+        title2_tmp.close()
+        paths.append(title2_tmp.name)
 
         # Save hook text
         hook_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
@@ -61,57 +91,47 @@ def create_short():
 
         cmd = [
             'ffmpeg', '-y',
-
-            # YouTube Shorts native resolution 1080x1920 9:16
-            # Using scale filter after encoding to keep memory low on Railway
             '-f', 'lavfi', '-i', 'color=c=0x0a0a0a:s=540x960:r=30',
             '-i', audio_tmp.name,
             '-map', '0:v', '-map', '1:a',
             '-shortest',
             '-threads', '1',
-
             '-vf', (
-                # Static bold title — centered, large, white with black shadow
-                f"drawtext=textfile='{title_tmp.name}'"
-                f":fontcolor=white"
-                f":fontsize=28"
-                f":x=(w-text_w)/2"
-                f":y=(h/2)-100"
-                f":borderw=4"
-                f":bordercolor=black"
+                # Title line 1 — static, centered, white, bold
+                f"drawtext=textfile='{title1_tmp.name}'"
+                f":fontcolor=white:fontsize=34"
+                f":x=(w-text_w)/2:y=(h/2)-120"
+                f":borderw=4:bordercolor=black"
                 f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
                 f":expansion=none,"
-
-                # Scrolling hook — bright green ticker style
+                # Title line 2 — static, centered, white, bold
+                f"drawtext=textfile='{title2_tmp.name}'"
+                f":fontcolor=white:fontsize=34"
+                f":x=(w-text_w)/2:y=(h/2)-70"
+                f":borderw=4:bordercolor=black"
+                f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
+                f":expansion=none,"
+                # Scrolling hook — green ticker
                 f"drawtext=textfile='{hook_tmp.name}'"
-                f":fontcolor=0x00FF7F"
-                f":fontsize=22"
-                f":y=(h/2)+30"
+                f":fontcolor=0x00FF7F:fontsize=22"
+                f":y=(h/2)+40"
                 f":x=w-{scroll_speed}*t"
-                f":borderw=2"
-                f":bordercolor=black"
+                f":borderw=2:bordercolor=black"
                 f":shadowx=1:shadowy=1:shadowcolor=black@0.9"
                 f":expansion=none"
             ),
-
-            # Video codec optimized for YouTube
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
-            '-crf', '23',           # Higher quality than before (was 28)
-            '-profile:v', 'high',   # YouTube prefers high profile
+            '-crf', '23',
+            '-profile:v', 'high',
             '-level', '4.0',
-            '-pix_fmt', 'yuv420p',  # Required for YouTube compatibility
-            '-r', '30',             # 30fps — YouTube Shorts standard
-
-            # Audio optimized for YouTube
+            '-pix_fmt', 'yuv420p',
+            '-r', '30',
             '-c:a', 'aac',
-            '-b:a', '128k',         # Standard YouTube audio bitrate
-            '-ar', '44100',         # Standard sample rate
-            '-ac', '2',             # Stereo
-
-            # Fast start for streaming
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2',
             '-movflags', '+faststart',
-
             video_path
         ]
 

@@ -32,8 +32,8 @@ def create_short():
                 "content_type": str(request.content_type)
             }), 400
 
-        title = request.form.get('title', 'AI Tips')[:80]
-        hook = request.form.get('hook', '')[:100]
+        title = request.form.get('title', 'AI Tips')[:50]
+        hook = request.form.get('hook', '')[:120]
 
         # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
@@ -57,41 +57,61 @@ def create_short():
         video_path = tempfile.mktemp(suffix='.mp4')
         paths.append(video_path)
 
+        scroll_speed = 60
+
         cmd = [
             'ffmpeg', '-y',
-            '-f', 'lavfi', '-i', 'color=c=black:s=540x960:r=24',
+
+            # YouTube Shorts native resolution 1080x1920 9:16
+            # Using scale filter after encoding to keep memory low on Railway
+            '-f', 'lavfi', '-i', 'color=c=0x0a0a0a:s=540x960:r=30',
             '-i', audio_tmp.name,
             '-map', '0:v', '-map', '1:a',
             '-shortest',
             '-threads', '1',
+
             '-vf', (
-                # Title: white, smaller font, word wrap at 480px wide
+                # Static bold title — centered, large, white with black shadow
                 f"drawtext=textfile='{title_tmp.name}'"
                 f":fontcolor=white"
-                f":fontsize=18"
-                f":x=30"
-                f":y=300"
-                f":borderw=2"
+                f":fontsize=34"
+                f":x=(w-text_w)/2"
+                f":y=(h/2)-100"
+                f":borderw=4"
                 f":bordercolor=black"
-                f":line_spacing=8"
+                f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
                 f":expansion=none,"
-                # Hook: green, smaller font, below title
+
+                # Scrolling hook — bright green ticker style
                 f"drawtext=textfile='{hook_tmp.name}'"
-                f":fontcolor=00ff00"
-                f":fontsize=16"
-                f":x=30"
-                f":y=390"
+                f":fontcolor=0x00FF7F"
+                f":fontsize=22"
+                f":y=(h/2)+30"
+                f":x=w-{scroll_speed}*t"
                 f":borderw=2"
                 f":bordercolor=black"
-                f":line_spacing=6"
+                f":shadowx=1:shadowy=1:shadowcolor=black@0.9"
                 f":expansion=none"
             ),
+
+            # Video codec optimized for YouTube
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
-            '-crf', '28',
+            '-crf', '23',           # Higher quality than before (was 28)
+            '-profile:v', 'high',   # YouTube prefers high profile
+            '-level', '4.0',
+            '-pix_fmt', 'yuv420p',  # Required for YouTube compatibility
+            '-r', '30',             # 30fps — YouTube Shorts standard
+
+            # Audio optimized for YouTube
             '-c:a', 'aac',
-            '-b:a', '96k',
+            '-b:a', '128k',         # Standard YouTube audio bitrate
+            '-ar', '44100',         # Standard sample rate
+            '-ac', '2',             # Stereo
+
+            # Fast start for streaming
             '-movflags', '+faststart',
+
             video_path
         ]
 

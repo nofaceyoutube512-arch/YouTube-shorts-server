@@ -98,4 +98,121 @@ def create_short():
         # Artist name
         filters.append(
             f"drawtext=textfile='{artist_file}'"
-            f":font
+            f":fontcolor=white@0.6:fontsize=20"
+            f":x=(w-text_w)/2:y=60"
+            f":borderw=2:bordercolor=black@0.8"
+            f":expansion=none"
+        )
+
+        # Song title
+        filters.append(
+            f"drawtext=textfile='{title_file}'"
+            f":fontcolor=white:fontsize=36"
+            f":x=(w-text_w)/2:y=100"
+            f":borderw=3:bordercolor=black"
+            f":expansion=none"
+        )
+
+        # Lyric lines timed
+        for (lfile, start, end) in lyric_files:
+            filters.append(
+                f"drawtext=textfile='{lfile}'"
+                f":fontcolor=white:fontsize=40"
+                f":x=(w-text_w)/2:y=(h/2)-20"
+                f":borderw=4:bordercolor=black"
+                f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
+                f":enable='between(t,{start:.2f},{end:.2f})'"
+                f":expansion=none"
+            )
+
+        # Scrolling hook
+        if hook_file:
+            filters.append(
+                f"drawtext=textfile='{hook_file}'"
+                f":fontcolor=0x00FF7F:fontsize=24"
+                f":y=h-80"
+                f":x=w-60*t"
+                f":borderw=2:bordercolor=black"
+                f":shadowx=1:shadowy=1:shadowcolor=black@0.9"
+                f":expansion=none"
+            )
+
+        # CTA at the end
+        cta_text = "Stream now - link in bio"
+        cta_file = write_txt(cta_text)
+        cta_start = max(0, duration - 5)
+        filters.append(
+            f"drawtext=textfile='{cta_file}'"
+            f":fontcolor=0xFFD700:fontsize=28"
+            f":x=(w-text_w)/2:y=h-140"
+            f":borderw=3:bordercolor=black"
+            f":enable='between(t,{cta_start:.2f},{duration:.2f})'"
+            f":expansion=none"
+        )
+
+        vf = ','.join(filters)
+
+        # Output path
+        video_path = tempfile.mktemp(suffix='.mp4')
+        paths.append(video_path)
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-f', 'lavfi', '-i', 'color=c=0x0a0a0a:s=540x960:r=30',
+            '-i', audio_tmp.name,
+            '-map', '0:v', '-map', '1:a',
+            '-shortest',
+            '-threads', '1',
+            '-vf', vf,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '23',
+            '-profile:v', 'high',
+            '-level', '4.0',
+            '-pix_fmt', 'yuv420p',
+            '-r', '30',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2',
+            '-movflags', '+faststart',
+            video_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            return jsonify({
+                "error": "ffmpeg failed",
+                "returncode": result.returncode,
+                "stderr": result.stderr[-3000:]
+            }), 500
+
+        with open(video_path, 'rb') as f:
+            video_bytes = f.read()
+
+        if len(video_bytes) == 0:
+            return jsonify({"error": "ffmpeg produced empty file"}), 500
+
+        return send_file(
+            io.BytesIO(video_bytes),
+            mimetype='video/mp4',
+            as_attachment=True,
+            download_name=f'short_{uuid.uuid4().hex[:8]}.mp4'
+        )
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
+    finally:
+        for p in paths:
+            try:
+                if p and os.path.exists(p):
+                    os.unlink(p)
+            except:
+                pass
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)

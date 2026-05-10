@@ -3,6 +3,7 @@ import io
 import uuid
 import subprocess
 import tempfile
+import requests as req
 from flask import Flask, request, send_file, jsonify
 
 app = Flask(__name__)
@@ -21,7 +22,6 @@ def debug():
     })
 
 def split_title(title, max_chars=25):
-    """Split title into two lines at a word boundary near the middle."""
     words = title.split()
     best_split = 0
     best_diff = float('inf')
@@ -33,7 +33,6 @@ def split_title(title, max_chars=25):
             best_diff = diff
             best_split = i
     if best_split == 0:
-        # fallback: just split at max_chars
         line1 = title[:max_chars].rsplit(' ', 1)[0]
         line2 = title[len(line1):].strip()
     else:
@@ -46,9 +45,11 @@ def create_short():
     paths = []
     try:
         audio_file = request.files.get('audio')
-        if not audio_file:
+        file_url = request.form.get('file_url')
+
+        if not audio_file and not file_url:
             return jsonify({
-                "error": "audio file is required",
+                "error": "audio file or file_url is required",
                 "files": list(request.files.keys()),
                 "content_type": str(request.content_type)
             }), 400
@@ -56,34 +57,33 @@ def create_short():
         title = request.form.get('title', 'AI Tips')[:80]
         hook = request.form.get('hook', '')[:120]
 
-        # Split title into two lines
         line1, line2 = split_title(title)
 
-        # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
-        audio_file.save(audio_tmp.name)
+        if file_url:
+            r = req.get(file_url, stream=True)
+            for chunk in r.iter_content(chunk_size=8192):
+                audio_tmp.write(chunk)
+        else:
+            audio_file.save(audio_tmp.name)
         audio_tmp.close()
         paths.append(audio_tmp.name)
 
-        # Save title line 1
         title1_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         title1_tmp.write(line1)
         title1_tmp.close()
         paths.append(title1_tmp.name)
 
-        # Save title line 2
         title2_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         title2_tmp.write(line2)
         title2_tmp.close()
         paths.append(title2_tmp.name)
 
-        # Save hook text
         hook_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         hook_tmp.write(hook)
         hook_tmp.close()
         paths.append(hook_tmp.name)
 
-        # Output path
         video_path = tempfile.mktemp(suffix='.mp4')
         paths.append(video_path)
 
@@ -97,21 +97,18 @@ def create_short():
             '-shortest',
             '-threads', '1',
             '-vf', (
-                # Title line 1 — static, centered, white, bold
                 f"drawtext=textfile='{title1_tmp.name}'"
                 f":fontcolor=white:fontsize=34"
                 f":x=(w-text_w)/2:y=(h/2)-120"
                 f":borderw=4:bordercolor=black"
                 f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
                 f":expansion=none,"
-                # Title line 2 — static, centered, white, bold
                 f"drawtext=textfile='{title2_tmp.name}'"
                 f":fontcolor=white:fontsize=34"
                 f":x=(w-text_w)/2:y=(h/2)-70"
                 f":borderw=4:bordercolor=black"
                 f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
                 f":expansion=none,"
-                # Scrolling hook — green ticker
                 f"drawtext=textfile='{hook_tmp.name}'"
                 f":fontcolor=0x00FF7F:fontsize=22"
                 f":y=(h/2)+40"

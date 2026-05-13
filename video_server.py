@@ -56,7 +56,7 @@ def create_short():
         # Save audio
         audio_tmp = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
         if file_url:
-            r = req.get(file_url, stream=True)
+            r = req.get(file_url, stream=True, timeout=30)
             for chunk in r.iter_content(chunk_size=8192):
                 audio_tmp.write(chunk)
         else:
@@ -87,65 +87,72 @@ def create_short():
         # Build lyric line text files and timing
         lyric_files = []
         if lines:
-            time_per_line = duration / len(lines)
+            # Reserve first 2s for title card, last 5s for CTA
+            lyric_start_offset = 2.0
+            lyric_end_offset = max(lyric_start_offset + len(lines) * 2, duration - 5.0)
+            available = lyric_end_offset - lyric_start_offset
+            time_per_line = available / len(lines)
             for i, line in enumerate(lines):
                 f = write_txt(line)
-                lyric_files.append((f, i * time_per_line, (i + 1) * time_per_line))
+                start = lyric_start_offset + i * time_per_line
+                end = lyric_start_offset + (i + 1) * time_per_line
+                lyric_files.append((f, start, end))
 
-        # Build ffmpeg filter
+        # ── FFMPEG FILTER CHAIN ──────────────────────────────────────────
         filters = []
 
-        # Artist name
+        # 1. Artist name — small, top center, subtle
         filters.append(
             f"drawtext=textfile='{artist_file}'"
-            f":fontcolor=white@0.6:fontsize=20"
-            f":x=(w-text_w)/2:y=60"
-            f":borderw=2:bordercolor=black@0.8"
+            f":fontcolor=white@0.7:fontsize=22"
+            f":x=(w-text_w)/2:y=50"
+            f":borderw=2:bordercolor=black@0.9"
             f":expansion=none"
         )
 
-        # Song title
+        # 2. Song title — bold, just below artist
         filters.append(
             f"drawtext=textfile='{title_file}'"
-            f":fontcolor=white:fontsize=36"
-            f":x=(w-text_w)/2:y=100"
-            f":borderw=3:bordercolor=black"
+            f":fontcolor=white:fontsize=48"
+            f":x=(w-text_w)/2:y=85"
+            f":borderw=4:bordercolor=black"
+            f":shadowx=3:shadowy=3:shadowcolor=black@0.9"
             f":expansion=none"
         )
 
-        # Lyric lines timed
+        # 3. Lyric lines — centered vertically, fade in/out feel via timing
         for (lfile, start, end) in lyric_files:
             filters.append(
                 f"drawtext=textfile='{lfile}'"
-                f":fontcolor=white:fontsize=40"
-                f":x=(w-text_w)/2:y=(h/2)-20"
-                f":borderw=4:bordercolor=black"
+                f":fontcolor=white:fontsize=26"
+                f":x=(w-text_w)/2:y=(h*0.52)"
+                f":borderw=3:bordercolor=black"
                 f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
                 f":enable='between(t,{start:.2f},{end:.2f})'"
                 f":expansion=none"
             )
 
-        # Scrolling hook
+        # 4. Scrolling hook — slow scroll, green, bottom of screen
         if hook_file:
             filters.append(
                 f"drawtext=textfile='{hook_file}'"
-                f":fontcolor=0x00FF7F:fontsize=24"
-                f":y=h-80"
-                f":x=w-60*t"
+                f":fontcolor=0x00FF7F:fontsize=22"
+                f":y=h-55"
+                f":x=w-18*t"
                 f":borderw=2:bordercolor=black"
                 f":shadowx=1:shadowy=1:shadowcolor=black@0.9"
                 f":expansion=none"
             )
 
-        # CTA at the end
-        cta_text = "Stream now - link in bio"
-        cta_file = write_txt(cta_text)
+        # 5. Gold CTA — last 5 seconds, centered near bottom
+        cta_file = write_txt("Stream now  link in bio")
         cta_start = max(0, duration - 5)
         filters.append(
             f"drawtext=textfile='{cta_file}'"
-            f":fontcolor=0xFFD700:fontsize=28"
-            f":x=(w-text_w)/2:y=h-140"
+            f":fontcolor=0xFFD700:fontsize=30"
+            f":x=(w-text_w)/2:y=h-120"
             f":borderw=3:bordercolor=black"
+            f":shadowx=2:shadowy=2:shadowcolor=black@0.8"
             f":enable='between(t,{cta_start:.2f},{duration:.2f})'"
             f":expansion=none"
         )
